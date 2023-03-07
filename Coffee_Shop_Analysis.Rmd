@@ -1,0 +1,197 @@
+---
+title: "Coffee Analysis"
+output: html_notebook
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, warning=FALSE, message=FALSE)
+```
+
+```{r libraries}
+library(tidyverse)
+library(rvest)
+library(XML)
+library(stringr)
+library(glue)
+library(dplyr)
+```
+
+# Scraping Location Counts for Each Coffee Shop
+```{r}
+my_data <- function(website, range, name){
+  url <- website
+  link <- read_html(url)
+  tables <- html_nodes(link, css="li")
+  my_tables <- tables[range]
+  name <- html_text(my_tables)
+  name <- as.data.frame(name)
+}
+Starbucks <- my_data("https://www.menuism.com/restaurant-locations/starbucks-coffee-39564", 29:79, Starbucks)
+Dunkin_Donuts <- my_data("https://www.menuism.com/restaurant-locations/dunkin-donuts-181624", 30:74, Dunkin_Donuts)
+Peets_Coffee <- my_data("https://www.menuism.com/restaurant-locations/peets-coffee-tea-84051", 29:37 , Peets_Coffee)
+Tim_Hortons <- my_data("https://www.menuism.com/restaurant-locations/tim-hortons-190025", 29:44, Tim_Hortons)
+Panera_Bread <- my_data("https://www.menuism.com/restaurant-locations/panera-bread-4258", 30:75, Panera_Bread)
+Caribou_Coffee <- my_data("https://www.menuism.com/restaurant-locations/caribou-coffee-164861", 28:47, Caribou_Coffee)
+Au_Bon_Pain <- my_data("https://www.menuism.com/restaurant-locations/au-bon-pain-69342", 28:49, Au_Bon_Pain)
+Coffee_Bean <- my_data("https://www.menuism.com/restaurant-locations/the-coffee-bean-tea-leaf-165988", 28:35, Coffee_Bean)
+McDonalds <- my_data("https://www.menuism.com/restaurant-locations/mcdonalds-21019", 30:80, McDonalds)
+```
+
+# Creating a Function to Match State Name and State Abbreviation
+```{r}
+stateabb <- function(data){
+  state.abb[match(data,state.name)]
+}
+```
+
+# Data Cleaning
+```{r}
+my_tidy <- function(mydata, letters){
+  glue <- glue("[:upper:][:alpha:]*[:space:]?[:upper:]?[:alpha:]* (?=", letters, ")")
+  mydata$States <- str_extract(mydata$name, glue)
+  mydata$States <- str_squish(mydata$States)
+  mydata$State_Abbreviation <- stateabb(mydata$States)
+
+  mydata$Location_Count <- str_extract(mydata$name, "(?<=locations ).*")
+  mydata$Location_Count <- str_remove_all(mydata$Location_Count,"[()]")
+
+  my_data <- data.frame(mydata$State_Abbreviation, mydata$Location_Count)
+}
+
+Starbucks <- my_tidy(Starbucks, "Starbucks")
+Dunkin_Donuts <- my_tidy(Dunkin_Donuts, "Dunkin")
+Peets_Coffee <- my_tidy(Peets_Coffee, "Peet")
+Tim_Hortons <- my_tidy(Tim_Hortons, "Tim")
+Panera_Bread <- my_tidy(Panera_Bread, "Panera")
+Caribou_Coffee <- my_tidy(Caribou_Coffee, "Caribou")
+Au_Bon_Pain <- my_tidy(Au_Bon_Pain, "Au")
+Coffee_Bean <- my_tidy(Coffee_Bean, "The")
+McDonalds <- my_tidy(McDonalds, "McDonald's")
+
+my_rename <- function(title, quote){
+  colnames(title)[1] = "State_Abbreviation"
+  myglue <- glue(quote, "_Location_Count")
+  title %>%
+  rename_with(.cols = 2, ~ myglue)
+}
+
+Starbucks <- my_rename(Starbucks, "Starbucks")
+Dunkin_Donuts <- my_rename(Dunkin_Donuts, "Dunkin_Donuts")
+Peets_Coffee <- my_rename(Peets_Coffee, "Peets_Coffee")
+Tim_Hortons <- my_rename(Tim_Hortons, "Tim_Hortons")
+Panera_Bread <- my_rename(Panera_Bread, "Panera_Bread")
+Caribou_Coffee <- my_rename(Caribou_Coffee, "Caribou_Coffee")
+Au_Bon_Pain <- my_rename(Au_Bon_Pain, "Au_Bon_Pain")
+Coffee_Bean <- my_rename(Coffee_Bean, "Coffee_Bean")
+McDonalds <- my_rename(McDonalds, "McDonalds")
+
+all_data <- list(Starbucks, Dunkin_Donuts, Peets_Coffee, Tim_Hortons, Panera_Bread, Caribou_Coffee, Au_Bon_Pain, Coffee_Bean, McDonalds) %>% 
+              reduce(full_join, by='State_Abbreviation')
+
+head(all_data)
+```
+
+# Web Scraping State Populations
+```{r}
+url <- "https://simple.wikipedia.org/wiki/List_of_U.S._states_by_population"
+link <- read_html(url)
+table <- html_nodes(link, css="table")
+State_Pop <- html_table(table)
+State_Pop <- as.data.frame(State_Pop)
+
+State_Pop <- data.frame(State_Pop$State, State_Pop$Population.estimate..July.1..2019.2.)
+State_Pop$State_Pop.State <- stateabb(State_Pop$State_Pop.State)
+
+colnames(State_Pop)[1] = "State_Abbreviation"
+State_Pop <- State_Pop %>%
+rename_with(.cols = 2, ~ "Population_Estimate")
+  
+my_merge <- list(State_Pop, all_data) %>% 
+            reduce(full_join, by='State_Abbreviation')
+
+head(my_merge)
+```
+
+# Merging Coffee Shop Data with State Populations
+```{r}
+my_merge <- my_merge %>%
+  pivot_longer(Starbucks_Location_Count:McDonalds_Location_Count,
+    names_to = "Chain",
+    values_to = "Location_Count"
+  )
+
+my_merge$Chain <- my_merge$Chain%>% 
+  str_remove_all("(_Location_Count)") %>%
+  str_replace_all("(_)", " ")
+
+my_merge <- my_merge %>%
+  mutate(Annual_Revenue_Millions = case_when(
+    Chain == "Au Bon Pain" ~ 41,
+    Chain == "Caribou Coffee" ~ 262,
+    Chain == "Coffee Bean" ~ 500,
+    Chain == "Dunkin Donuts" ~ 1400,
+    Chain == "McDonalds" ~ 23220,
+    Chain == "Panera Bread" ~ 500,
+    Chain == "Peets Coffee" ~ 983,
+    Chain == "Starbucks" ~ 24610,
+    Chain == "Tim Hortons" ~ 3340
+  ))
+```
+
+The annual revenue reported above is displayed in Millions and was taken from 2021 data. 
+
+# Grouping States by Region
+```{r}
+Northeast <- c("Connecticut", "Maine", "Massachusetts", "New Hampshire", "Rhode Island", "Vermont", "New Jersey", "New York", "Pennsylvania")
+Northeast <- stateabb(Northeast)
+
+Midwest <- c("Illinois", "Indiana", "Michigan", "Ohio", "Wisconsin", "Iowa", "Kansas", "Minnesota", "Missouri", "Nebraska", "North Dakota", "South Dakota")
+Midwest <- stateabb(Midwest)
+
+South <- c("Delaware", "Florida", "Georgia", "Maryland", "North Carolina", "South Carolina", "Virginia", "Washington, D.C", "West Virginia", "Alabama", "Kentucky", "Mississippi", "Tennessee", "Arkansas", "Louisiana", "Oklahoma", "Texas" )
+South <- stateabb(South)
+
+West <- c("Arizona", "Colorado", "Idaho", "Montana", "Nevada", "New Mexico", "Utah", "Wyoming", "Alaska", "California", "Hawaii", "Oregon", "Washington")
+West <- stateabb(West)
+
+my_merge <- my_merge %>%
+  mutate(Region = case_when(
+    State_Abbreviation %in% Northeast ~ "Northeast",
+    State_Abbreviation %in% Midwest ~ "Midwest",
+    State_Abbreviation %in% South ~ "South",
+    State_Abbreviation %in% West ~ "West"
+  ))
+
+col_order <- c("State_Abbreviation", "Region", "Population_Estimate", "Chain", "Location_Count", "Annual_Revenue_Millions")
+
+my_merge <- my_merge[, col_order]
+
+head(my_merge)
+```
+
+
+# Visualizing the Prevalence of Chains across Regions
+```{r}
+my_merge %>%
+  ggplot(aes(x=Region, y=as.numeric(Location_Count), fill = Chain)) +
+  geom_col() + 
+  labs(title= "Prevalence of Chains across Regions") +
+  ylab("Location Count") +
+  xlab("Region")
+```
+
+From the graph above we can see trends on the prevalence of chains across the different regions. For example, McDonalds has the most locations in the South and Midwest. Starbucks has the most locations in the South and West. McDonalds has the most locations overall.
+
+# Looking at Locations Counts vs Annual Revenue
+```{r}
+my_merge$Location_Count <- as.numeric(my_merge$Location_Count)
+
+my_merge %>%
+  select(Chain, Location_Count, Annual_Revenue_Millions) %>%
+  group_by(Chain, Annual_Revenue_Millions) %>%
+  summarize(Total_Location_Count = sum(Location_Count, na.rm=TRUE)) %>%
+  mutate(Revenue_Per_Location = Annual_Revenue_Millions/Total_Location_Count) %>%
+  arrange(desc(Revenue_Per_Location))
+```
+
+The chart above shows the average revenue that a chain generates per location. We can see that Time Hortons generates the most revenue per store and Au Bon Pain generates the least revenue per store. 
