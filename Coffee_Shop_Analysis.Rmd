@@ -1,6 +1,8 @@
 ---
 title: "Coffee Analysis"
-output: html_notebook
+output:
+  html_document:
+    df_print: paged
 ---
 
 ```{r setup, include=FALSE}
@@ -18,7 +20,7 @@ library(dplyr)
 
 # Scraping Location Counts for Each Coffee Shop
 ```{r}
-my_data <- function(website, range, name){ 
+my_data <- function(website, range, name){
   url <- website
   link <- read_html(url)
   tables <- html_nodes(link, css="li")
